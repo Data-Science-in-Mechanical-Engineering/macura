@@ -1,0 +1,22 @@
+defaults:
+  - algorithm: macura
+  - dynamics_model: gaussian_mlp_ensemble
+  - overrides: macura_humanoid
+
+seed: 42
+# can use cuda:0 here if GPU available
+device: "cpu"
+
+log_frequency_agent: 1000
+save_video: false
+debug_mode: true
+
+# Name of Experiment series (used as folder name to store results)
+experiment: m2ac_humanoid_dsme_gpu
+root_dir: "./exp"
+hydra:
+  run:
+    dir: ${root_dir}/${algorithm.name}/${experiment}/${overrides.env}/${now:%Y.%m.%d}/${now:%H%M%S}
+
+  sweep:
+    dir: ${root_dir}/${algorithm.name}/${experiment}/${overrides.env}/${now:%Y.%m.%d}/${now:%H%M%S}

@@ -1,0 +1,247 @@
+# This file explains what most of the config options in the mbrl/conf folder will change. 
+#It is not used to start experiments and is only for readers who want to try configs not mentioned in the paper.
+
+
+
+
+#mbrl/examples/conf/main.yaml
+defaults:
+  # cfg.algorithm is selected, possible options: mbpo, m2ac, macura
+  # corresponds to #mbrl/conf/algoirithm/... .yaml
+  - algorithm: mbpo
+  # cfg.dynamics_model is selected, possible options: gaussian_mlp_ensemble
+  # corresponds to #mbrl/conf/dynamics_model/... .yaml
+  - dynamics_model: gaussian_mlp_ensemble
+  # cfg.overrides is selected, possible options: mbpo_halfcheetah, m2ac_walker, macura_humanoid ...
+  # corresponds to #mbrl/conf/overrides/... .yaml
+  # here all hyperparamters can be set for specific algorithm and environemnt pair
+  - overrides: mbpo_halfcheetah
+#random seed for every random number torch and numpy need. Fixed seed will lead to reproducible results.
+seed: 0
+# here the device for torch calculation is set. cpu corresponds to no gpu otherwise if nvidea gpu is accesible use cuda:0
+device: "cpu"
+
+#the agent performs num_sac_updates_per_step updates after each environment step. After log_frequency_agent updates the loger will print out training results
+log_frequency_agent: 1000
+#true then videos in ${root_dir}/${algorithm.name}/${experiment}/${overrides.env}/${now:%Y.%m.%d}/${now:%H%M%S}/video are safed
+save_video: true
+#true then more usefull output for debugging is printed out in the log
+debug_mode: true
+
+# Name of Experiment series (used as folder name to store results)
+experiment: default
+
+root_dir: "./exp"
+hydra:
+  run:
+    dir: ${root_dir}/${algorithm.name}/${experiment}/${overrides.env}/${now:%Y.%m.%d}/${now:%H%M%S}
+
+  sweep:
+    dir: ${root_dir}/${algorithm.name}/${experiment}/${overrides.env}/${now:%Y.%m.%d}/${now:%H%M%S}
+
+# --------------------------------------------
+#          MBPO Algorithm configuration
+# --------------------------------------------
+#It follows the possible options for #mbrl/examples/conf/algorithms/mbpo.yaml
+
+#pls do not change
+name: "mbpo"
+
+# True if every batch data should be safed and mean and variance are calculated for further normalization
+normalize: true
+# False float is used to store normalization data True then double is used
+normalize_double_precision: true
+# False means that the model does predict the absolute state values of the next state given the current state
+# True means the model predicts the relative change of values of next state in each dimension relative to current state
+target_is_delta: true
+# False means that the model does not learn to predict the reward. Thus the out_model would be just of observation dimension
+# True means model also learns to predict reward given current state and action
+learned_rewards: true
+#as in overrides explained
+freq_train_model: ${overrides.freq_train_model}
+# value of 0 to 1 describing how much percentage of data in SAC Buffer should consist of real data.
+real_data_ratio: ${overrides.real_data_ratio}
+
+#Decides whether to sample actions(true) or to take the mean (false) of the actor network of the SAC agent
+sac_samples_action: true
+# If True then for initial_exploration_steps at the start of mbpo_train() a uniformly random behaving agent is chosen to
+# to interact with the environment and to gather first data to learn the model. If False then the current agent, who
+# can also behave arbitrarily is chosen. But he will behave arbitrarily because the weights of the poilcy network are
+# arbitrarily chosen.
+random_initial_explore: false
+#How many steps should the environment be explored before starting any model or agent learning
+initial_exploration_steps: 5000
+#how many episodes in environment should be run after each epoch to evaluate performance of agent
+num_eval_episodes: 1
+
+# --------------------------------------------
+#          SAC Agent configuration
+# --------------------------------------------
+agent:
+  # Which SAC_agent class to use
+  _target_: mbrl.third_party.pytorch_sac_pranz24.sac.SAC
+  #Now follows all arguments which the SAC init() method needs
+
+  #num_inputs are the state dimensions
+  num_inputs: ???
+  #action is a Box which contains the shape of the action space (typically just n-Vector) and the lowest and highest
+  #value of the action in general
+  # ??? values are filled up by mbrl.planning.complete_agent_cfg(env, cfg.algorithm.agent) with right values for
+  # environment
+  action_space:
+    _target_: gym.env.Box
+    low: ???
+    high: ???
+    shape: ???
+    # following args are environment specific so they will be specified and explained in overrides section
+  args:
+    gamma: ${overrides.sac_gamma}
+    tau: ${overrides.sac_tau}
+    alpha: ${overrides.sac_alpha}
+    policy: ${overrides.sac_policy}
+    target_update_interval: ${overrides.sac_target_update_interval}
+    automatic_entropy_tuning: ${overrides.sac_automatic_entropy_tuning}
+    target_entropy: ${overrides.sac_target_entropy}
+    hidden_size: ${overrides.sac_hidden_size}
+    device: ${device}
+    lr: ${overrides.sac_lr}
+
+# --------------------------------------------
+#          Environment / specific environment-algorithm configuration
+# --------------------------------------------
+# it follows the possible options for #mbrl/conf/overrides/mbpo_halfcheeta.yaml
+
+# the name of the environment. gym___ folowed by gym environment name
+# other options are possible. You need to look in the _legacy_make_env() method of util.env.py
+env: "gym___HalfCheetah-v2"
+
+#Threshhold for relative improvement in the model error. After patience times no realtive improvement
+#more then improvement_threshold training will stop. This is compared in the evalutation of the model in training
+# in the function maybe_get_best_weights()
+improvement_threshold: 0.01
+#if you do not want to work with relative improvement set numper of epochs here static
+num_epochs_train_model: None
+
+
+# termination function override of the environment. no_termination will lead to no terminal states.
+# after trial_length steps the environment restarts then.
+# other options in env/termination_fns.py
+term_fn: "no_termination"
+trial_length: 1000
+
+# total number of steps in environment after that training is finished
+num_steps: 400000
+# number of steps for each training epoch. In one epoch there could be more episodes(environment runs till terminal state)
+# in this case one training epoch is one environment episode
+epoch_length: 1000
+#if provided, only the best ``num_elites`` models according to validation score are used to predict in ensemble
+num_elites: 7
+# number of model learning steps where "no relevant" improvement is tolerated. After that training epoch of model is finished
+patience: 5
+#learning rate for model trained
+model_lr: 0.0003
+#weight decay for model trainer
+model_wd: 0.00001
+# batch size for modell learning. If using ensemble seperate batches of this size(can overlap) will be drawn
+model_batch_size: 256
+# 0.2 of batch will be used to validate models fitting
+validation_ratio: 0.2
+
+# every 250 env steps model training is started
+freq_train_model: 250
+#after each environment steps effictivly there will be 400 rollouts(*rollout_length) more in sac_buffer. But they will
+#only be added after model_update so after freq_train_model steps
+effective_model_rollouts_per_step: 400
+#[20, 300, 1, 25] = cfg.overrides.rollout_schedule would mean:
+#rollout length = 1 for epoch 0-19 then linear increase to 25 until epoch 300 then it stays 25
+rollout_schedule: [20, 150, 1, 1]
+#how many sac_agent updates per step
+num_sac_updates_per_step: 10
+# after how many environment step the agent performs num_sac_updates_per_step updates
+sac_updates_every_steps: 1
+# Multiplies with the sac_buffer_capacity. Choose how many epochs the transitions shall have place in the sac_buffer
+num_epochs_to_retain_sac_buffer: 1
+
+#discount factor for sac_agent
+sac_gamma: 0.99
+#exponential moving average of Q target network. So tau decides how fast it should converge to current estimate
+sac_tau: 0.005
+# the temperature parameter. Greater value leads to more stochasticity in the policy so more exploration
+sac_alpha: 0.2
+# what kind of probability distribution should be used to modell the policy (so which network outputs)
+sac_policy: "Gaussian"
+#update with tau after every step. Choose higher if sac_tau = 1 and so for hard updates of target Q-Network
+sac_target_update_interval: 1
+# Automatic entropy tuning activation
+sac_automatic_entropy_tuning: true
+# The target entropy of the policy for automatic entropy tuning of SAC. dim(-|A|) is a proposed heuristic of SAC
+sac_target_entropy: -4
+# Number of neurons in hidden layers of SAC networks
+sac_hidden_size: 1024
+#Learning rate for SAC's neural networks
+sac_lr: 0.0003
+#Batch size for gradient descent in SAC learning
+sac_batch_size: 256
+
+
+# For classic MBPO algorithm a gaussian ensemble is used to learn the dynamics of the system
+#It follows the possible options for #mbrl/conf/dynamics_model/gaussian_mlp_ensemble.yaml
+
+#the target refers to the python class which hydra will instantiate. All following parameters refers to attributes
+#the init method  of GaussianMLP needs
+_target_: mbrl.models.GaussianMLP
+#device should be the same as global option and refers to the graph where torch stores it calulcations
+device: ${device}
+#num layers = n means 1 input layer of size model_in(=observation+action dimensions) and n-1 hidden layers of size hid_size
+num_layers: 4
+hid_size: 200
+#in_size and out_size are not specified yet, but cfg will be modified and these values will be set to
+#model_in(=observation+action dimensions) for in_size and model_out(=observation+1[reward dimension]) for out_size
+in_size: ???
+out_size: ???
+# ensemble_size specifies how many Gaussian_MLP are used in the ensemble
+ensemble_size: 7
+# deterministic = True would lead to use just the mean of the Gaussian MLPs and no variance would be learned
+deterministic: false
+# propagation_method refers to which model or model combination is used in the ensemble to make the predicitions
+# possible options are: random_model
+propagation_method: random_model
+#learn_logvar_bounds = True would lead to automatic learning of upper and lower bound of predicted variance. When
+# confronted with out of distribution data the single models of the enemble can predict arbitarry variance so it is
+# good to set an upper and lower bound for it for stability
+# So far according to the library false with fixed values works better
+learn_logvar_bounds: false  # so far this works better
+# The exponent for the minimum variance calculation in init of GaussianMLPf predicitions of the ensemble. Only relevant to tune for M2AC
+minimum_variance_exponent: -10
+# This will set the activation function after each hidden layer in the Gaussian_MLPs
+activation_fn_cfg:
+  # torch.nn.ReLU would also be possible
+  _target_: torch.nn.SiLU
+
+#M2AC specific configurations
+#-------------------------------------
+#H_max the maximum rollout length of rollout procedure of M2AC
+max_rollout_length: 10
+#The default masking rate if max_rollout_length is 1. Otherwise the implemented function in m2ac code
+#is used to schedule the masking rate
+masking_rate_H1: 0.5
+#The model error penalty coefficient alpha of the M2AC paper. Used to penalize predicted rewards by their uncertainty.
+model_error_penalty_coefficient: 0.001
+
+
+#MACURA specific configurations
+
+#-------------------------------------
+#H_max the maximum rollout length of rollout procedure of MACURA
+max_rollout_length: 10
+# Over how many model rollouts shall be the running average of the uncertainty
+unc_tresh_run_avg_history: 2000
+# Use pink noise exploration in the model. We do not recommend it.
+pink_noise_exploration_mod: False
+# Use pink noise exploration in the environment. We recommend it.
+pink_noise_exploration_env: True
+# xi factor of paper
+xi: 2.0
+# zeta percentile of paper
+zeta: 95
+

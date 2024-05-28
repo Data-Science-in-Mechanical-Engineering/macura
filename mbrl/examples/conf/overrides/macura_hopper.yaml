@@ -1,0 +1,44 @@
+# @package _group_
+env: "gym___Hopper-v2"
+term_fn: "hopper"
+
+num_steps: 150000
+epoch_length: 1000
+num_elites: 5
+patience: 5
+improvement_threshold: 0.01
+model_lr: 0.0003
+model_wd: 5e-5
+model_batch_size: 256
+model_hidden_size: 200
+validation_ratio: 0.2
+freq_train_model: 250
+effective_model_rollouts_per_step: 400
+num_sac_updates_per_step: 30
+sac_updates_every_steps: 1
+num_epochs_to_retain_sac_buffer: 1
+
+minimum_variance_exponent: -10
+
+sac_buffer_size: 2000000
+real_data_ratio: 0.05
+
+sac_gamma: 0.99
+sac_tau: 0.005
+sac_alpha: 0.2
+sac_policy: "Gaussian"
+sac_target_update_interval: 4
+sac_automatic_entropy_tuning: true
+sac_target_entropy: 0 #-3
+sac_hidden_size: 1024
+sac_lr: 0.0003
+sac_batch_size: 256
+
+unc_tresh_run_avg_history: 2000
+pink_noise_exploration_mod: False
+#options are pink,white,det
+exploration_type_env: "pink"
+max_rollout_length: 10
+
+xi: 30.0
+zeta: 90

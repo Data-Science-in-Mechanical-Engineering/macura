@@ -1,0 +1,37 @@
+# @package _group_
+env: "gym___Walker2d-v2"
+term_fn: "walker2d"
+
+num_steps: 200000
+epoch_length: 1000
+num_elites: 7
+patience: 10
+improvement_threshold: 0.01
+model_lr: 0.0003
+model_wd: 5e-5
+model_batch_size: 256
+model_hidden_size: 200
+validation_ratio: 0.2
+freq_train_model: 250
+effective_model_rollouts_per_step: 406
+rollout_schedule: [20, 150, 1, 1]
+num_sac_updates_per_step: 30
+sac_updates_every_steps: 1
+num_epochs_to_retain_sac_buffer: 3
+
+#options are pink,white,det
+exploration_type_env: "det"
+
+minimum_variance_exponent: -10
+real_data_ratio: 0.05
+
+sac_gamma: 0.99
+sac_tau: 0.005
+sac_alpha: 0.2
+sac_policy: "Gaussian"
+sac_target_update_interval: 4
+sac_automatic_entropy_tuning: true
+sac_target_entropy: -1 # ignored, since entropy tuning is false
+sac_hidden_size: 1024
+sac_lr: 0.00007
+sac_batch_size: 512

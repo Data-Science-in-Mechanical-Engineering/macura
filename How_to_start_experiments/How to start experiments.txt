@@ -1,0 +1,16 @@
+Go into the MACURA_Submission Folder and open terminal in it. For experiments as declared in mbrl/examples/conf/main.yaml just execute:
+
+python -m mbrl.examples.main 
+
+If you want to change algorithm(macura,m2ac,mbpo), or environment(mbpo_halfcheetah, mbpo_ant, macura_humanoid, macura_walker,m2ac_walker,...) you can do so without touching the yaml files by executing
+
+python -m mbrl.examples.main algorithm=macura overrides=macura_humanoid
+
+If you want to change configs by command line instead of changing config files in examples/conf then you can do so by for example
+
+python -m mbrl.examples.main algorithm=macura overrides=macura_humanoid seed=42 experiment=MACURA_Experiment_Name save_video=true algorithm.num_eval_episodes=5 algorithm.max_rollout_length=10  overrides.xi=5
+
+Just write <file>.property = value, with 
+<file> = empty(for main.yaml properties) or algorithm for (macura.yaml or mbpo.yaml ...) or overrides for (macura_huamnoid.yaml ...)
+property = look for property names in the config files
+
