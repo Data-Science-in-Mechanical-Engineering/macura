@@ -1,4 +1,7 @@
-This is the MACURA_Submission folder containing the code to launch experiments for MUJOCO environments with the algorithms MBPO, M2AC and MACURA as described in the paper: Trust the Model Where It Trusts Itself - Model-Based Actor-Critic with Uncertainty-Aware Rollout Adaption.
+This is the github repository of the paper 'Trust the Model Where It Trusts Itself - Model-Based Actor-Critic with Uncertainty-Aware Rollout Adaption'. [arxiv](https://arxiv.org/abs/2405.19014)
 
-When you want to reproduce the results you first need to install mujoco and many python packages. This process is described in InstallationGuide/InstallationGuide.txt.
-The next step is to launch the experiments using the config manager hydra. A description how to launch the experiments of the paper is given in the folder "How_to_start_experiments".
+The repository containts the code to reproduce the results of SAC, MBPO, M2AC, and MACURA on MuJoCo as reported in the paper.
+
+Installation instructions are provided in InstallationGuide/InstallationGouide.txt, instructions on how to launch experiments using the Hydra config-file manager are provided in the 'How_to_start_experiments' directory.
+
+A video comparing the final performance of MACURA and MBPO on the Humanoid task is provided in the 'Video' directory.
