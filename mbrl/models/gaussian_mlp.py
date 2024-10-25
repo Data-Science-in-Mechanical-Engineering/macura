@@ -89,7 +89,7 @@ class GaussianMLP(Ensemble):
         print(f"Using minumum variance exponent of {minimum_variance_exponent}")
         def create_activation():
             if activation_fn_cfg is None:
-                activation_func = nn.ReLU()
+                activation_func = nn.SiLU()
             else:
                 # Handle the case where activation_fn_cfg is a dict
                 cfg = omegaconf.OmegaConf.create(activation_fn_cfg)

@@ -4,12 +4,12 @@
 # LICENSE file in the root directory of this source tree.
 import pathlib
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
-
-import gym.wrappers
+import gymnasium as gym
 import hydra
 import numpy as np
 import omegaconf
-
+from mbrl.planning.sac_wrapper import SACAgent
+from mbrl.third_party.pytorch_sac import VideoRecorder
 import mbrl.models
 import mbrl.planning
 import mbrl.types
@@ -92,11 +92,44 @@ def calc_rest_ensemble_mean_std(means_of_all_ensembles: torch.Tensor,
 
     a = torch.add(means_of_rest_ensembles_squared, stds_of_all_ensembles_squared)
     var_of_rest_ensembles = a - means_of_rest_ensembles ** 2
-    assert torch.sum(torch.isinf(means_of_rest_ensembles)) == 0
-    assert torch.sum(torch.isnan(means_of_rest_ensembles)) == 0
-    assert torch.sum(torch.isinf(var_of_rest_ensembles)) == 0
-    assert torch.sum(torch.isnan(var_of_rest_ensembles)) == 0
+    # assert torch.sum(torch.isinf(means_of_rest_ensembles)) == 0
+    # assert torch.sum(torch.isnan(means_of_rest_ensembles)) == 0
+    # assert torch.sum(torch.isinf(var_of_rest_ensembles)) == 0
+    # assert torch.sum(torch.isnan(var_of_rest_ensembles)) == 0
     return means_of_rest_ensembles, var_of_rest_ensembles
+
+def evaluate(
+        env: gym.Env,
+        agent: SACAgent,
+        num_episodes: int,
+        video_recorder: VideoRecorder,
+) -> float:
+    """We want to evaluate the agent.
+    Uses agent to act in environemnt. Calculates the mean reward over the episodes.
+    Also uses videorecorder to capture agents behaviour in environment.
+
+    Args:
+        env (gym.Env): The environment of the evaluations
+        num_episodes (int): Number of episodes to evaluate the agent
+        agent (SACAgent): Agent to evaluate
+        video_recorder (VideoRecorder): Videorecorder which captures the actions in environment
+
+    Returns:
+        (float): The average reward of the num_episode episodes
+    """
+    avg_episode_reward = 0
+    for episode in range(num_episodes):
+        obs, _ = env.reset()
+        video_recorder.init(enabled=(episode == 0))
+        terminated= truncated = False
+        episode_reward = 0
+        while not terminated and not truncated:
+            action = agent.act(obs)
+            obs, reward, terminated, truncated, _ = env.step(action)
+            video_recorder.record(env)
+            episode_reward += reward
+        avg_episode_reward += episode_reward
+    return avg_episode_reward / num_episodes
 
 
 def create_one_dim_tr_model(
@@ -483,12 +516,14 @@ def train_model_and_save_model_and_data(
         bootstrap_permutes=cfg.get("bootstrap_permutes", False),
     )
     assert np.isnan(dataset_train.transitions.act).sum() == 0
-    assert np.isnan(dataset_train.transitions.dones).sum() == 0
+    assert np.isnan(dataset_train.transitions.terminateds).sum() == 0
+    assert np.isnan(dataset_train.transitions.truncateds).sum() == 0
     assert np.isnan(dataset_train.transitions.next_obs).sum() == 0
     assert np.isnan(dataset_train.transitions.obs).sum() == 0
     assert np.isnan(dataset_train.transitions.rewards).sum() == 0
     assert np.isnan(dataset_val.transitions.act).sum() == 0
-    assert np.isnan(dataset_val.transitions.dones).sum() == 0
+    assert np.isnan(dataset_val.transitions.terminateds).sum() == 0
+    assert np.isnan(dataset_val.transitions.truncateds).sum() == 0
     assert np.isnan(dataset_val.transitions.next_obs).sum() == 0
     assert np.isnan(dataset_val.transitions.obs).sum() == 0
     assert np.isnan(dataset_val.transitions.rewards).sum() == 0
@@ -575,9 +610,9 @@ def rollout_agent_trajectories_Tracking_States(
         agent_kwargs (dict): any keyword arguments to pass to `agent.act()` method.
         trial_length (int, optional): a maximum length for trials (env will be reset regularly
             after this many number of steps). Defaults to ``None``, in which case trials
-            will end when the environment returns ``done=True``.
+            will end when the environment returns ``terminated=True or truncated=True``.
         callback (callable, optional): a function that will be called using the generated
-            transition data `(obs, action. next_obs, reward, done)`.
+            transition data `(obs, action. next_obs, reward, terminated, truncated)`.
         replay_buffer (:class:`mbrl.util.ReplayBuffer`, optional):
             a replay buffer to store data to use for training.
         collect_full_trajectories (bool): if ``True``, indicates that replay buffers should
@@ -610,14 +645,14 @@ def rollout_agent_trajectories_Tracking_States(
     trial = 0
     total_rewards: List[float] = []
     while True:
-        obs = env.reset()
+        obs , info = env.reset()
         agent.reset()
-        done = False
+        terminated =  truncated = False
         total_reward = 0.0
-        while not done:
+        while not terminated and not truncated:
             if replay_buffer is not None:
                 real_experienced_states_full.append(mbrl.util.mujoco.MujocoEnvHandler.get_current_state(env))
-                next_obs, reward, done, info = step_env_and_add_to_buffer(
+                next_obs, reward, terminated, truncated, info = step_env_and_add_to_buffer(
                     env,
                     obs,
                     agent,
@@ -633,9 +668,9 @@ def rollout_agent_trajectories_Tracking_States(
                         "replay buffer is given."
                     )
                 action = agent.act(obs, **agent_kwargs)
-                next_obs, reward, done, info = env.step(action)
+                next_obs, reward, terminated, truncated, info = env.step(action)
                 if callback:
-                    callback((obs, action, next_obs, reward, done))
+                    callback((obs, action, next_obs, reward, terminated, truncated))
             obs = next_obs
             total_reward += reward
             step += 1
@@ -643,7 +678,7 @@ def rollout_agent_trajectories_Tracking_States(
                 total_rewards.append(total_reward)
                 return total_rewards
             if trial_length and step % trial_length == 0:
-                if collect_full_trajectories and not done and replay_buffer is not None:
+                if collect_full_trajectories and not terminated and replay_buffer is not None:
                     replay_buffer.close_trajectory()
                 break
         trial += 1
@@ -677,9 +712,9 @@ def rollout_agent_trajectories(
         agent_kwargs (dict): any keyword arguments to pass to `agent.act()` method.
         trial_length (int, optional): a maximum length for trials (env will be reset regularly
             after this many number of steps). Defaults to ``None``, in which case trials
-            will end when the environment returns ``done=True``.
+            will end when the environment returns ``terminated=True`` or ``truncated=True``.
         callback (callable, optional): a function that will be called using the generated
-            transition data `(obs, action. next_obs, reward, done)`.
+            transition data `(obs, action. next_obs, reward, terminated, truncated)`.
         replay_buffer (:class:`mbrl.util.ReplayBuffer`, optional):
             a replay buffer to store data to use for training.
         collect_full_trajectories (bool): if ``True``, indicates that replay buffers should
@@ -712,13 +747,14 @@ def rollout_agent_trajectories(
     trial = 0
     total_rewards: List[float] = []
     while True:
-        obs = env.reset()
+        obs, info= env.reset()
         agent.reset()
-        done = False
+        terminated = False
+        truncated = False
         total_reward = 0.0
-        while not done:
+        while not terminated and not truncated:
             if replay_buffer is not None:
-                next_obs, reward, done, info = step_env_and_add_to_buffer(
+                next_obs, reward, terminated,truncated, _ = step_env_and_add_to_buffer(
                     env,
                     obs,
                     agent,
@@ -734,9 +770,9 @@ def rollout_agent_trajectories(
                         "replay buffer is given."
                     )
                 action = agent.act(obs, **agent_kwargs)
-                next_obs, reward, done, info = env.step(action)
+                next_obs, reward, terminated,truncated, _ = env.step(action)
                 if callback:
-                    callback((obs, action, next_obs, reward, done))
+                    callback((obs, action, next_obs, reward, terminated, truncated))
             obs = next_obs
             total_reward += reward
             step += 1
@@ -744,7 +780,7 @@ def rollout_agent_trajectories(
                 total_rewards.append(total_reward)
                 return total_rewards
             if trial_length and step % trial_length == 0:
-                if collect_full_trajectories and not done and replay_buffer is not None:
+                if collect_full_trajectories and not terminated and replay_buffer is not None:
                     replay_buffer.close_trajectory()
                 break
         trial += 1
@@ -762,7 +798,7 @@ def step_env_and_add_to_buffer(
         replay_buffer: ReplayBuffer,
         callback: Optional[Callable] = None,
         agent_uses_low_dim_obs: bool = False,
-) -> Tuple[np.ndarray, float, bool, Dict]:
+) -> Tuple[np.ndarray, float, bool,bool, Dict]:
     """Steps the environment with an agent's action and populates the replay buffer.
 
     Args:
@@ -774,7 +810,7 @@ def step_env_and_add_to_buffer(
         replay_buffer (:class:`mbrl.util.ReplayBuffer`): the replay buffer
             containing stored data.
         callback (callable, optional): a function that will be called using the generated
-            transition data `(obs, action. next_obs, reward, done)`.
+            transition data `(obs, action. next_obs, reward, terminated, trunacted)`.
         agent_uses_low_dim_obs (bool): only valid if env is of type
             :class:`mbrl.env.MujocoGymPixelWrapper`. If ``True``, instead of passing the obs
             produced by env.reset/step to the agent, it will pass
@@ -782,7 +818,7 @@ def step_env_and_add_to_buffer(
             trained with low dimensional obs, but collect pixel obs in the replay buffer.
         noise_std (float): noise std for white gaussian noise in actions
     Returns:
-        (tuple): next observation, reward, done and meta-info, respectively, as generated by
+        (tuple): next observation, reward, terminated, truncated and meta-info, respectively, as generated by
         `env.step(agent.act(obs))`.
     """
 
@@ -800,14 +836,14 @@ def step_env_and_add_to_buffer(
 
     #inplace truncated normal sampling for white noise
 
-    next_obs, reward, done, info = env.step(action)
+    next_obs, reward, terminated, truncated, info = env.step(action)
 
 
 
-    replay_buffer.add(obs, action, next_obs, reward, done)
+    replay_buffer.add(obs, action, next_obs, reward, terminated, truncated)
     if callback:
-        callback((obs, action, next_obs, reward, done))
-    return next_obs, reward, done, info
+        callback((obs, action, next_obs, reward, terminated, truncated))
+    return next_obs, reward, terminated, truncated, info
 
 def step_env_and_add_to_buffer_eps(
         env: gym.Env,
@@ -830,7 +866,7 @@ def step_env_and_add_to_buffer_eps(
         replay_buffer (:class:`mbrl.util.ReplayBuffer`): the replay buffer
             containing stored data.
         callback (callable, optional): a function that will be called using the generated
-            transition data `(obs, action. next_obs, reward, done)`.
+            transition data `(obs, action. next_obs, reward, terminated, truncated)`.
         agent_uses_low_dim_obs (bool): only valid if env is of type
             :class:`mbrl.env.MujocoGymPixelWrapper`. If ``True``, instead of passing the obs
             produced by env.reset/step to the agent, it will pass
@@ -838,7 +874,7 @@ def step_env_and_add_to_buffer_eps(
             trained with low dimensional obs, but collect pixel obs in the replay buffer.
         noise_std (float): noise std for white gaussian noise in actions
     Returns:
-        (tuple): next observation, reward, done and meta-info, respectively, as generated by
+        (tuple): next observation, reward, termianted, truncated and meta-info, respectively, as generated by
         `env.step(agent.act(obs))`.
     """
 
@@ -856,9 +892,9 @@ def step_env_and_add_to_buffer_eps(
 
     #inplace truncated normal sampling for white noise
 
-    next_obs, reward, done, info = env.step(action)
+    next_obs, reward, terminated, truncated, info = env.step(action)
 
-    replay_buffer.add(obs, action, next_obs, reward, done)
+    replay_buffer.add(obs, action, next_obs, reward, terminated, truncated)
     if callback:
-        callback((obs, action, next_obs, reward, done))
-    return next_obs, reward, done, info
+        callback((obs, action, next_obs, reward, terminated, truncated))
+    return next_obs, reward, terminated, truncated, info

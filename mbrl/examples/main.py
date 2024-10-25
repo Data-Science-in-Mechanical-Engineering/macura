@@ -17,19 +17,19 @@ def run(cfg: omegaconf.DictConfig):
 
     print(f"Using the following algorithm: {cfg.algorithm.name}!")
 
-    env, term_fn, reward_fn = mbrl.util.env.EnvHandler.make_env(cfg)
+    env, term_fn, reward_fn = mbrl.util.env.EnvHandler.make_env(cfg, test_env=False)
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
     if cfg.algorithm.name == "mbpo":
         # test_env is used for evaluating the model after each training epoch but it is not clear why not env is used
-        test_env, *_ = mbrl.util.env.EnvHandler.make_env(cfg)
+        test_env, *_ = mbrl.util.env.EnvHandler.make_env(cfg, test_env=True)
         return mbpo.train(env, test_env, term_fn, cfg)
     if cfg.algorithm.name == "m2ac":
-        test_env, *_ = mbrl.util.env.EnvHandler.make_env(cfg)
+        test_env, *_ = mbrl.util.env.EnvHandler.make_env(cfg, test_env=True)
         return m2ac.train(env, test_env, term_fn, cfg)
     if cfg.algorithm.name == "macura":
-        test_env, *_ = mbrl.util.env.EnvHandler.make_env(cfg)
-        test_env2, *_ = mbrl.util.env.EnvHandler.make_env(cfg)
+        test_env, *_ = mbrl.util.env.EnvHandler.make_env(cfg, test_env=True)
+        test_env2, *_ = mbrl.util.env.EnvHandler.make_env(cfg, test_env=True)
         return macura.train(env, test_env,test_env2 ,term_fn, cfg)
 
 if __name__ == "__main__":

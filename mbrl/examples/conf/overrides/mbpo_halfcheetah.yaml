@@ -1,5 +1,5 @@
 # @package _group_
-env: "gym___HalfCheetah-v2"
+env: "gym___HalfCheetah-v4"
 term_fn: "no_termination"
 
 num_steps: 400000

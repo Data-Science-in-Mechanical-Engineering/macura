@@ -6,26 +6,15 @@ MACURA_Submission is the folder where the whole project folder mbrl is contained
 
 0. Open a Terminal
 
-1. export MACURA_PATH=<pathToMACURA_Submission folder>
-
-2. mkdir -p $MACURA_PATH/.mujoco \
-    && wget https://mujoco.org/download/mujoco210-linux-x86_64.tar.gz -O mujoco.tar.gz \
-    && tar -xf mujoco.tar.gz -C $MACURA_PATH/.mujoco \
-    && rm mujoco.tar.gz
-    
-3. export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$MACURA_PATH/.mujoco/mujoco210/bin
-
-4. If conda not already installed, follow run the following command: 
+1. If conda not already installed, follow run the following command: 
     wget \
     https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
     && bash Miniconda3-latest-Linux-x86_64.sh\
     && rm -f Miniconda3-latest-Linux-x86_64.sh
     
+2. conda env create -f environment.yaml
 
-5. conda env create -f environment.yaml
+3. conda activate macura_env
 
-6. conda activate macura_env
+4. export CPATH=/<Conda Installation Directory>/envs/macura_env/include
 
-7. export CPATH=/<Conda Installation Directory>/envs/macura_env/include
-
-Command 3 may need to be repeated for every new Terminal before experiment start.

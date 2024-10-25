@@ -1,4 +1,3 @@
-# @package _group_
 name: "m2ac"
 
 normalize: true
@@ -15,18 +14,26 @@ num_eval_episodes: 5
 max_rollout_length: 10
 masking_rate_H1: 0.5
 model_error_penalty_coefficient: 0.001
+
+
+#Periodic network reset of SAC agent
+critic_reset: false
+#critic_reset_factor = crf, only has effect if critic_reset = true
+# new_weights = (1-crf)*old_weights+crf*new_weights
+critic_reset_factor: 1.0
+critic_reset_every_step: 20000 # env_steps
+
 # --------------------------------------------
 #          SAC Agent configuration
 # --------------------------------------------
 agent:
-  _target_: mbrl.third_party.pytorch_sac_pranz24.sac.SAC
   num_inputs: ???
   action_space:
-    _target_: gym.env.Box
     low: ???
     high: ???
     shape: ???
   args:
+    layernorm: false 
     gamma: ${overrides.sac_gamma}
     tau: ${overrides.sac_tau}
     alpha: ${overrides.sac_alpha}

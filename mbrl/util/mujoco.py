@@ -4,10 +4,10 @@
 # LICENSE file in the root directory of this source tree.
 from typing import Tuple
 
-import gym
-import gym.wrappers
+import gymnasium as gym
+import gymnasium.wrappers
 import numpy as np
-
+import sys
 import mbrl.env.mujoco_envs
 import mbrl.planning
 import mbrl.types
@@ -15,9 +15,9 @@ from mbrl.util.env import EnvHandler, Freeze
 
 
 # Include the mujoco environments in mbrl.env
-def _is_mujoco_gym_env(env: gym.wrappers.TimeLimit) -> bool:
-    class_module = env.env.__class__.__module__
-    return "gym.envs.mujoco" in class_module or (
+def _is_mujoco_gym_env(env: gymnasium.wrappers.TimeLimit) -> bool:
+    class_module = env.unwrapped.__class__.__module__
+    return "gymnasium.envs.mujoco" in class_module or (
         "mbrl.env." in class_module and hasattr(env.env, "data")
     )
 
@@ -32,7 +32,7 @@ class FreezeMujoco(Freeze):
 
     .. code-block:: python
 
-       env = gym.make("HalfCheetah-v2")
+       env = gym.make("HalfCheetah-v4")
        env.reset()
        action = env.action_space.sample()
        # o1_expected, *_ = env.step(action)
@@ -51,7 +51,7 @@ class FreezeMujoco(Freeze):
         self._step_count = 0
 
         if not _is_mujoco_gym_env(env):
-            raise RuntimeError("Tried to freeze an unsupported environment.")
+            raise RuntimeError(f"Tried to freeze an unsupported environment {env}.")
 
     def __enter__(self):
         self._init_state = (

@@ -4,7 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 from typing import Dict, Optional, Tuple
 
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
 
@@ -102,8 +102,8 @@ class ModelEnv:
             sample (bool): if ``True`` model predictions are stochastic. Defaults to ``False``.
 
         Returns:
-            (tuple): contains the predicted next observation, reward, done flag and metadata.
-            The done flag is computed using the termination_fn passed in the constructor.
+            (tuple): contains the predicted next observation, reward, terminated flag and metadata.
+            The terminated flag is computed using the termination_fn passed in the constructor.
         """
         assert len(actions.shape) == 2  # batch, action_dim
         with torch.no_grad():
@@ -126,7 +126,7 @@ class ModelEnv:
                 if self.reward_fn is None
                 else self.reward_fn(actions, next_observs)
             )
-            dones = self.termination_fn(actions, next_observs)
+            terminated = self.termination_fn(actions, next_observs)
 
             if pred_terminals is not None:
                 raise NotImplementedError(
@@ -136,8 +136,8 @@ class ModelEnv:
             if self._return_as_np:
                 next_observs = next_observs.cpu().numpy()
                 rewards = rewards.cpu().numpy()
-                dones = dones.cpu().numpy()
-            return next_observs, rewards, dones, next_model_state
+                terminated = terminated.cpu().numpy()
+            return next_observs, rewards, terminated, next_model_state
 
     def step_plus_gaussians(
             self,
@@ -157,7 +157,7 @@ class ModelEnv:
             sample (bool): if ``True`` model predictions are stochastic. Defaults to ``False``.
 
         Returns:
-            (tuple): contains the predicted next observation, reward, done flag, model state.
+            (tuple): contains the predicted next observation, reward, terminated flag, model state.
             For m2ac also chosen_means, chosen_stds, means_of_all_ensembles, stds_of_all_ensembles, model_indices.
             The done flag is computed using the termination_fn passed in the constructor.
             chosen_means is [model_input.shape[0], observationsize+1] Tensor of means chosen by model_indices
@@ -195,7 +195,7 @@ class ModelEnv:
                 if self.reward_fn is None
                 else self.reward_fn(actions, next_observs)
             )
-            dones = self.termination_fn(actions, next_observs)
+            terminated = self.termination_fn(actions, next_observs)
 
             if pred_terminals is not None:
                 raise NotImplementedError(
@@ -205,13 +205,13 @@ class ModelEnv:
             if self._return_as_np:
                 next_observs = next_observs.cpu().numpy()
                 rewards = rewards.cpu().numpy()
-                dones = dones.cpu().numpy()
+                terminated = terminated.cpu().numpy()
                 chosen_means.cpu().numpy()
                 chosen_stds.cpu().numpy()
                 means_of_all_ensembles.cpu().numpy()
                 stds_of_all_ensembles.cpu().numpy()
                 model_indices.cpu().numpy()
-            return (next_observs, rewards, dones, next_model_state,
+            return (next_observs, rewards, terminated, next_model_state,
                     chosen_means, chosen_stds, means_of_all_ensembles,
                     stds_of_all_ensembles, model_indices)
 
@@ -257,11 +257,11 @@ class ModelEnv:
                 action_batch = torch.repeat_interleave(
                     action_for_step, num_particles, dim=0
                 )
-                _, rewards, dones, model_state = self.step(
+                _, rewards, terminateds, model_state = self.step(
                     action_batch, model_state, sample=True
                 )
                 rewards[terminated] = 0
-                terminated |= dones
+                terminated |= terminateds
                 total_rewards += rewards
 
             total_rewards = total_rewards.reshape(-1, num_particles)

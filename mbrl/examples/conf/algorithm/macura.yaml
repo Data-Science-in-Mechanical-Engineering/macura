@@ -1,4 +1,3 @@
-# @package _group_
 name: "macura"
 
 normalize: true
@@ -8,6 +7,12 @@ learned_rewards: true
 freq_train_model: ${overrides.freq_train_model}
 real_data_ratio: ${overrides.real_data_ratio}
 
+#Periodic network reset of SAC agent
+critic_reset: false
+#critic_reset_factor = crf, only has effect if critic_reset = true
+# new_weights = (1-crf)*old_weights+crf*new_weights
+critic_reset_factor: 1.0
+critic_reset_every_step: 20000 # env_steps
 
 sac_samples_action: true
 initial_exploration_steps: 5000
@@ -19,14 +24,13 @@ max_rollout_length: ${overrides.max_rollout_length}
 #          SAC Agent configuration
 # --------------------------------------------
 agent:
-  _target_: mbrl.third_party.pytorch_sac_pranz24.sac.SAC
   num_inputs: ???
   action_space:
-    _target_: gym.env.Box
     low: ???
     high: ???
     shape: ???
   args:
+    layernorm: false 
     gamma: ${overrides.sac_gamma}
     tau: ${overrides.sac_tau}
     alpha: ${overrides.sac_alpha}

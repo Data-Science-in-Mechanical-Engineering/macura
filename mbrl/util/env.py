@@ -5,8 +5,8 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple, Union, cast
 
-import gym
-import gym.wrappers
+import gymnasium as gym
+import gymnasium.wrappers
 import hydra
 import numpy as np
 import omegaconf
@@ -40,7 +40,7 @@ def _handle_learned_rewards_and_seed(
         reward_fn = None
 
     if cfg.seed is not None:
-        env.seed(cfg.seed)
+        env.reset(seed=cfg.seed)
         env.observation_space.seed(cfg.seed + 1)
         env.action_space.seed(cfg.seed + 2)
 
@@ -48,47 +48,35 @@ def _handle_learned_rewards_and_seed(
 
 
 def _legacy_make_env(
-    cfg: Union[omegaconf.ListConfig, omegaconf.DictConfig],
+    cfg: Union[omegaconf.ListConfig, omegaconf.DictConfig],test_env:bool
 ) -> Tuple[gym.Env, mbrl.types.TermFnType, Optional[mbrl.types.RewardFnType]]:
+    render_mode = "human" if cfg.get("render", False) else None
+    if test_env:
+        render_mode = None
     if "dmcontrol___" in cfg.overrides.env:
         import mbrl.third_party.dmc2gym as dmc2gym
 
         domain, task = cfg.overrides.env.split("___")[1].split("--")
         term_fn, reward_fn = _get_term_and_reward_fn(cfg)
         env = dmc2gym.make(domain_name=domain, task_name=task)
+        env = gym.make("GymV26Environment-v0", env=env)
 
     elif "gym___" in cfg.overrides.env:
-        env = gym.make(cfg.overrides.env.split("___")[1])
+        env = gym.make(cfg.overrides.env.split("___")[1], render_mode=render_mode)
         term_fn, reward_fn = _get_term_and_reward_fn(cfg)
     else:
         import mbrl.env.mujoco_envs
 
         if cfg.overrides.env == "cartpole_continuous":
-            env = mbrl.env.cartpole_continuous.CartPoleEnv()
+            env = mbrl.env.cartpole_continuous.CartPoleEnv(render_mode=render_mode)
             term_fn = mbrl.env.termination_fns.cartpole
             reward_fn = mbrl.env.reward_fns.cartpole
-        elif cfg.overrides.env == "cartpole_pets_version":
-            env = mbrl.env.mujoco_envs.CartPoleEnv()
-            term_fn = mbrl.env.termination_fns.no_termination
-            reward_fn = mbrl.env.reward_fns.cartpole_pets
-        elif cfg.overrides.env == "pets_halfcheetah":
-            env = mbrl.env.mujoco_envs.HalfCheetahEnv()
-            term_fn = mbrl.env.termination_fns.no_termination
-            reward_fn = getattr(mbrl.env.reward_fns, "halfcheetah", None)
-        elif cfg.overrides.env == "pets_reacher":
-            env = mbrl.env.mujoco_envs.Reacher3DEnv()
-            term_fn = mbrl.env.termination_fns.no_termination
-            reward_fn = None
-        elif cfg.overrides.env == "pets_pusher":
-            env = mbrl.env.mujoco_envs.PusherEnv()
-            term_fn = mbrl.env.termination_fns.no_termination
-            reward_fn = mbrl.env.reward_fns.pusher
         elif cfg.overrides.env == "ant_truncated_obs":
-            env = mbrl.env.mujoco_envs.AntTruncatedObsEnv()
+            env = mbrl.env.mujoco_envs.AntTruncatedObsEnv(render_mode=render_mode)
             term_fn = mbrl.env.termination_fns.ant
             reward_fn = None
         elif cfg.overrides.env == "humanoid_truncated_obs":
-            env = mbrl.env.mujoco_envs.HumanoidTruncatedObsEnv()
+            env = mbrl.env.mujoco_envs.HumanoidTruncatedObsEnv(render_mode=render_mode)
             term_fn = mbrl.env.termination_fns.humanoid
             reward_fn = None
         else:
@@ -129,6 +117,7 @@ class EnvHandler(ABC):
     @staticmethod
     def make_env(
         cfg: Union[Dict, omegaconf.ListConfig, omegaconf.DictConfig],
+        test_env: bool
     ) -> Tuple[gym.Env, mbrl.types.TermFnType, Optional[mbrl.types.RewardFnType]]:
         """Creates an environment from a given OmegaConf configuration object.
 
@@ -180,9 +169,9 @@ class EnvHandler(ABC):
         cfg = omegaconf.OmegaConf.create(cfg)
         env_cfg = cfg.overrides.get("env_cfg", None)
         if env_cfg is None:
-            return _legacy_make_env(cfg)
+            return _legacy_make_env(cfg, test_env=test_env)
 
-        env = hydra.utils.instantiate(cfg.overrides.env_cfg)
+        env = hydra.utils.instantiate(env_cfg)
         env = gym.wrappers.TimeLimit(
             env, max_episode_steps=cfg.overrides.get("trial_length", 1000)
         )
@@ -269,11 +258,11 @@ class EnvHandler(ABC):
                 a = plan[i] if plan is not None else agent.act(current_obs)
                 if isinstance(a, torch.Tensor):
                     a = a.numpy()
-                next_obs, reward, done, _ = env.step(a)
+                next_obs, reward, termianted, truncated, _ = env.step(a)
                 actions.append(a)
                 real_obses.append(next_obs)
                 rewards.append(reward)
-                if done:
+                if terminated or truncated:
                     break
                 current_obs = next_obs
         return np.stack(real_obses), np.stack(rewards), np.stack(actions)

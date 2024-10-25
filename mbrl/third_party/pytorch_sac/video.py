@@ -1,7 +1,4 @@
 import os
-
-import imageio
-
 from mbrl.third_party.pytorch_sac import utils
 from matplotlib import pyplot as plt
 import cv2
