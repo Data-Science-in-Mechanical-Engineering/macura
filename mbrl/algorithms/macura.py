@@ -1,7 +1,7 @@
 import os
 from typing import Optional, Sequence, cast
 
-import gym
+import gymnasium as gym
 import hydra.utils
 import numpy as np
 import omegaconf
@@ -15,11 +15,11 @@ import mbrl.types
 import mbrl.util
 import mbrl.util.replay_buffer
 import mbrl.util.common
+import mbrl.util.mujoco
 import mbrl.util.math
 from mbrl.planning.sac_wrapper import SACAgent
 from mbrl.third_party.pytorch_sac import VideoRecorder
-
-import mbrl.util.mujoco
+from omegaconf import OmegaConf
 import mbrl.util.distance_measures as dm
 import colorednoise as cn
 
@@ -41,6 +41,7 @@ def rollout_model_and_populate_sac_buffer(
         batch_size: int,
         current_border_count,
         current_border_estimate: float,
+        env_steps,
         pink_noise_exploration_mod: bool=False,
         xi:float = 1.0,
         zeta: int = 95,
@@ -78,7 +79,7 @@ def rollout_model_and_populate_sac_buffer(
     new_sac_size = 0
     rollout_tracker = np.zeros((0,))
     certain_bool_map_over_all_rollouts = np.zeros(obs.shape[0], dtype=bool)
-
+    pred_truncated= np.zeros(initial_obs.shape[0], dtype=bool) # Let it be false all the time because model predictions do no get truncated
     if pink_noise_exploration_mod:
         action_noise = cn.powerlaw_psd_gaussian(1, (model_env.action_space.shape[0], max_rollout_length), random_state=rng)
     for i in range(max_rollout_length):
@@ -100,7 +101,7 @@ def rollout_model_and_populate_sac_buffer(
         # means_of_all_ensembles, stds_of_all_ensembles are (ensemble_size x batchsize) and are all means
         # and stds of all gaussians in the ensemble
         # model_indices is (batchsize) and is the chosen model_indices of the ensemebles [0,ensemble_size)
-        (pred_next_obs, pred_rewards, pred_dones, model_state,
+        (pred_next_obs, pred_rewards, pred_terminateds, model_state,
          chosen_means, chosen_stds, means_of_all_ensembles,
          stds_of_all_ensembles, model_indices) = model_env.step_plus_gaussians(action, model_state, sample=True)
 
@@ -165,12 +166,13 @@ def rollout_model_and_populate_sac_buffer(
             obs[certain_bool_map_over_all_rollouts],
             action[certain_bool_map_over_all_rollouts],
             pred_next_obs[certain_bool_map_over_all_rollouts],
-            pred_rewards[certain_bool_map_over_all_rollouts, 0],# pred_rewards and pred_done
-            pred_dones[certain_bool_map_over_all_rollouts, 0],# need to be of size batchsize not batchsize x 1
+            pred_rewards[certain_bool_map_over_all_rollouts, 0],# pred_rewards and v
+            pred_terminateds[certain_bool_map_over_all_rollouts, 0],# need to be of size batchsize not batchsize x 1
+            pred_truncated[certain_bool_map_over_all_rollouts], #Let it be false all the time because model predictions do no get truncated
             reduce_time=reduce_time #is true for i==0 and serves the purpose to reduce the lifetime of the stored items in replay buffer
         )
-        # squeezing to transform pred_dones from batch_size x 1 to batchsize
-        certain_bool_map_over_all_rollouts = np.logical_and(~(pred_dones.squeeze()),
+        # squeezing to transform pred_terminateds from batch_size x 1 to batchsize
+        certain_bool_map_over_all_rollouts = np.logical_and(~(pred_terminateds.squeeze()),
                                                             certain_bool_map_over_all_rollouts)
         obs = pred_next_obs
         batch_size = obs.shape[0]
@@ -180,43 +182,6 @@ def rollout_model_and_populate_sac_buffer(
         )
 
     return new_sac_size, border_for_this_rollout
-
-
-def evaluate(
-        env: gym.Env,
-        agent: SACAgent,
-        num_episodes: int,
-        video_recorder: VideoRecorder,
-) -> float:
-    """We want to evaluate the agent.
-    Uses agent to act in environemnt. Calculates the mean reward over the episodes.
-    Also uses videorecorder to capture agents behaviour in environment.
-
-    Args:
-        env (gym.Env): The environment of the evaluations
-        num_episodes (int): Number of episodes to evaluate the agent
-        agent (SACAgent): Agent to evaluate
-        video_recorder (VideoRecorder): Videorecorder which captures the actions in environment
-
-    Returns:
-        (float): The average reward of the num_episode episodes
-    """
-    avg_episode_reward = 0
-    video_recorder.init(enabled=True)
-    for episode in range(num_episodes):
-        obs = env.reset()
-        done = False
-        episode_reward = 0
-        counter = 0
-        while not done:
-            action = agent.act(obs)
-            obs, reward, done, _ = env.step(action)
-            video_recorder.record(env)
-            episode_reward += reward
-            counter += 1
-
-        avg_episode_reward += episode_reward
-    return avg_episode_reward / num_episodes
 
 
 def change_capacity_replay_buffer(
@@ -303,10 +268,7 @@ def train(
 
     # ------------------- Create SAC Agent -------------------
     mbrl.planning.complete_agent_cfg(env, cfg.algorithm.agent)
-    agent = SACAgent(
-        cast(pytorch_sac_pranz24.SAC, hydra.utils.instantiate(cfg.algorithm.agent))
-    )
-
+    agent = SACAgent(pytorch_sac_pranz24.SAC(cfg.algorithm.agent.num_inputs, env.action_space, cfg.algorithm.agent.args))
     # ------------------- Create Logger -------------------
     logger = mbrl.util.Logger(work_dir)
     logger.register_group(
@@ -384,6 +346,12 @@ def train(
     real_data_ratio = cfg.algorithm.real_data_ratio
     sac_batch_size = cfg.overrides.sac_batch_size
 
+    #Network reset
+    critic_reset = cfg.algorithm.critic_reset
+    critic_reset_every_step = cfg.algorithm.critic_reset_every_step
+    critic_reset_factor = cfg.algorithm.critic_reset_factor
+
+
     unc_tresh_run_avg_history = cfg.overrides.unc_tresh_run_avg_history
     pink_noise_exploration_mod = cfg.overrides.pink_noise_exploration_mod
     exploration_type_env = cfg.overrides.exploration_type_env
@@ -417,36 +385,35 @@ def train(
         # Because cfg.overrides.freq_train_model cancels out two ways to calculate the capacity
         # sac_buffer_capacity = max_rollout_length * effective_model_rollouts_per_step * epoch_length
         # sac_buffer_capacity = max_rollout_length * rollout_batch_size * trains_per_epoch
-
+        print(f"EnvSteps: {env_steps}")
         trains_per_epoch = epoch_length / freq_train_model
         sac_buffer_capacity = max_rollout_length * rollout_batch_size * trains_per_epoch
         sac_buffer_capacity = sac_buffer_capacity * num_epochs_to_retain_sac_buffer
         sac_buffer_capacity = int(sac_buffer_capacity)
         lifetime = num_epochs_to_retain_sac_buffer * trains_per_epoch
-        print("Sac Buffer Cap:")
-        print(sac_buffer_capacity)
         sac_buffer_capacity = int(sac_buffer_capacity)
         sac_buffer = change_capacity_replay_buffer(
             sac_buffer, obs_shape, act_shape, sac_buffer_capacity, cfg.seed, lifetime
         )
 
-        obs, done = None, False
+        obs, terminated, truncated = None, False, False
         if exploration_type_env == "pink":
             action_noise = cn.powerlaw_psd_gaussian(1, (env.action_space.shape[0], cfg.overrides.epoch_length),
                                                     random_state=rng)
         for steps_epoch in range(epoch_length):
-            if steps_epoch == 0 or done:
-                obs, done = env.reset(), False
+            if steps_epoch == 0 or (terminated or truncated):
+                obs, info = env.reset()
+                terminated = truncated =  False
             # --- Doing env step and adding to model dataset ---
             if exploration_type_env == "pink":
-                next_obs, reward, done, _ = mbrl.util.common.step_env_and_add_to_buffer_eps(
+                next_obs, reward, terminated, truncated, _ = mbrl.util.common.step_env_and_add_to_buffer_eps(
                     env, obs, agent, {}, replay_buffer_real_env, eps=action_noise[:, steps_epoch])
             elif exploration_type_env == "white":
-                next_obs, reward, done, _ = mbrl.util.common.step_env_and_add_to_buffer(
+                next_obs, reward, terminated, truncated, _ = mbrl.util.common.step_env_and_add_to_buffer(
                     env, obs, agent, {"sample": True}, replay_buffer_real_env
                 )
             elif exploration_type_env == "det":
-                next_obs, reward, done, _ = mbrl.util.common.step_env_and_add_to_buffer(
+                next_obs, reward, terminated, truncated, _ = mbrl.util.common.step_env_and_add_to_buffer(
                     env, obs, agent, {}, replay_buffer_real_env
                 )
             else:
@@ -477,33 +444,38 @@ def train(
                     rollout_batch_size,
                     current_border_count,
                     current_border_estimate,
+                    env_steps,
                     pink_noise_exploration_mod,
                     xi,
                     zeta
                 )
-
                 current_border_estimate_list[current_border_count_position] = current_border_estimate_update
-                if current_border_count_position == Max_Count - 1:
-                    current_border_estimate_list_full = True
-                    current_border_count = Max_Count - 1
-                else:
-                    current_border_count = current_border_count_position + 1
+                if current_border_estimate_list_full == False:
+                    if current_border_count_position == Max_Count - 1:
+                        current_border_estimate_list_full = True
+                        current_border_count = Max_Count - 1
+                    else:
+                        current_border_count = current_border_count_position + 1
                 current_border_count_position = (current_border_count_position + 1) % Max_Count
                 if current_border_estimate_list_full:
                     current_border_estimate = np.mean(current_border_estimate_list)
                 else:
                     current_border_estimate = np.mean(current_border_estimate_list[0:current_border_count_position])
-
             # --------------- Agent Training -----------------
             # here is a formula which controlls learning steps proportionally to the filling of the SAC buffer
             dynamic_updates_per_step = int(
                 ((sac_buffer.num_stored * 2) / sac_buffer.capacity) * num_sac_updates_per_step)
+            
+            #Periodic network reset
+            if critic_reset and env_steps%critic_reset_every_step==0:
+                agent.sac_agent.critic.reset_weights(critic_reset_factor)
+
             for _ in range(dynamic_updates_per_step):
                 use_real_data = rng.random() < real_data_ratio
                 which_buffer = replay_buffer_real_env if use_real_data else sac_buffer
                 if env_steps % sac_updates_every_steps != 0 or len(which_buffer) < sac_batch_size:
                     break  # only when buffer is full enough to batch start training
-
+                
                 agent.sac_agent.update_parameters(
                     which_buffer,
                     cfg.overrides.sac_batch_size,
@@ -519,7 +491,7 @@ def train(
 
             if env_steps % epoch_length == 0:
                 print(f"Epoch ended - env-steps:{env_steps}")
-                avg_reward = evaluate(
+                avg_reward = mbrl.util.common.evaluate(
                     test_env, agent, cfg.algorithm.num_eval_episodes, video_recorder
                 )
                 logger.log_data(

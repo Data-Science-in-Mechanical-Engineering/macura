@@ -1,25 +1,29 @@
-# @package _group_
 name: "sac"
 
 sac_samples_action: true
 initial_exploration_steps: 5000
-random_initial_explore: false
+random_initial_explore: true
 num_eval_episodes: 1
+eval_freq: 1
+
+#Periodic network reset of SAC agent
+critic_reset: false
+#critic_reset_factor = crf, only has effect if critic_reset = true
+# new_weights = (1-crf)*old_weights+crf*new_weights
+critic_reset_factor: 1.0
+critic_reset_every_step: 20000 # env_steps
 
 # --------------------------------------------
 #          SAC Agent configuration
 # --------------------------------------------
 agent:
-  _target_: mbrl.third_party.pytorch_sac_pranz24.sac.SAC
-  # num_inputs: ???
-  # action_space:
-    # _target_: gym.env.Box
-  #   low: ???
-  #   high: ???
-  #   shape: ???
-  # args:
-  #   _target_: mbrl.third_party.pytorch_sac_pranz24.sac.SAC
+  num_inputs: ???
+  action_space:
+    low: ???
+    high: ???
+    shape: ???
   args:
+    layernorm: false 
     gamma: ${overrides.sac_gamma}
     tau: ${overrides.sac_tau}
     alpha: ${overrides.sac_alpha}

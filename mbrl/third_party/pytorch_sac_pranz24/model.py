@@ -14,7 +14,6 @@ def weights_init_(m):
         torch.nn.init.xavier_uniform_(m.weight, gain=1)
         torch.nn.init.constant_(m.bias, 0)
 
-
 class ValueNetwork(nn.Module):
     def __init__(self, num_inputs, hidden_dim):
         super(ValueNetwork, self).__init__()
@@ -35,7 +34,7 @@ class ValueNetwork(nn.Module):
 class QNetwork(nn.Module):
     def __init__(self, num_inputs, num_actions, hidden_dim):
         super(QNetwork, self).__init__()
-
+        self.hidden_dim = hidden_dim
         # Q1 architecture
         self.linear1 = nn.Linear(num_inputs + num_actions, hidden_dim)
         self.linear2 = nn.Linear(hidden_dim, hidden_dim)
@@ -60,7 +59,35 @@ class QNetwork(nn.Module):
         x2 = self.linear6(x2)
 
         return x1, x2
+    #Reset Parameters towards network_reset_factor randomness
+    def reset_weights(self, network_reset_factor):
+        for module in self.children():
+            if isinstance(module, nn.Linear):
+                with torch.no_grad():
+                    random_weights = torch.zeros_like(module.weight)
+                    torch.nn.init.xavier_uniform_(random_weights, gain=1)
+                    module.weight = torch.nn.Parameter((1-network_reset_factor)*module.weight + network_reset_factor*random_weights)
+                    module.bias = torch.nn.Parameter((1-network_reset_factor)*module.bias)
 
+#Q Network with Layer normalization
+class QNetworkLN(QNetwork):
+    def __init__(self, num_inputs, num_actions, hidden_dim):
+        super(QNetworkLN, self).__init__(num_inputs, num_actions, hidden_dim)
+        self.hidden_dim=hidden_dim
+
+
+    def forward(self, state, action):
+        xu = torch.cat([state, action], 1)
+
+        x1 = F.relu(F.layer_norm(self.linear1(xu), [self.hidden_dim]))
+        x1 = F.relu(F.layer_norm(self.linear2(x1), [self.hidden_dim]))
+        x1 = self.linear3(x1)
+
+        x2 = F.relu(F.layer_norm(self.linear4(xu), [self.hidden_dim]))
+        x2 = F.relu(F.layer_norm(self.linear5(x2), [self.hidden_dim]))
+        x2 = self.linear6(x2)
+
+        return x1, x2
 
 class GaussianPolicy(nn.Module):
     def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None):
@@ -126,6 +153,17 @@ class GaussianPolicy(nn.Module):
         self.action_bias = self.action_bias.to(device)
         return super(GaussianPolicy, self).to(device)
 
+class GaussianPolicyLN(GaussianPolicy):
+    def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None):
+        super(GaussianPolicyLN, self).__init__(num_inputs, num_actions, hidden_dim, action_space)
+        self.hidden_dim=hidden_dim
+    def forward(self, state):
+        x = F.relu(F.layer_norm(self.linear1(state),[self.hidden_dim]))
+        x = F.relu(F.layer_norm(self.linear2(x),[self.hidden_dim]))
+        mean = self.mean_linear(x)
+        log_std = self.log_std_linear(x)
+        log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
+        return mean, log_std
 
 class DeterministicPolicy(nn.Module):
     def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None):
@@ -166,3 +204,13 @@ class DeterministicPolicy(nn.Module):
         self.action_bias = self.action_bias.to(device)
         self.noise = self.noise.to(device)
         return super(DeterministicPolicy, self).to(device)
+
+class DeterministicPolicyLN(DeterministicPolicy):
+    def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None):
+        super(DeterministicPolicyLN, self).__init__(num_inputs, num_actions, hidden_dim, action_space)
+        self.hidden_dim=hidden_dim
+    def forward(self, state):
+        x = F.relu(F.layer_norm(self.linear1(state),[self.hidden_dim]))
+        x = F.relu(F.layer_norm(self.linear2(x),[self.hidden_dim]))
+        mean = torch.tanh(self.mean(x)) * self.action_scale + self.action_bias
+        return mean

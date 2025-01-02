@@ -8,6 +8,9 @@ from mbrl.third_party.pytorch_sac_pranz24.model import (
     DeterministicPolicy,
     GaussianPolicy,
     QNetwork,
+    QNetworkLN,
+    GaussianPolicyLN,
+    DeterministicPolicyLN
 )
 from mbrl.third_party.pytorch_sac_pranz24.utils import hard_update, soft_update
 import wandb
@@ -18,21 +21,21 @@ class SAC(object):
         self.gamma = args.gamma
         self.tau = args.tau
         self.alpha = args.alpha
-
+        self.layernorm = args.layernorm
         self.policy_type = args.policy
         self.target_update_interval = args.target_update_interval
         self.automatic_entropy_tuning = args.automatic_entropy_tuning
 
         self.device = args.device
-
-        self.critic = QNetwork(num_inputs, action_space.shape[0], args.hidden_size).to(
-            device=self.device
-        )
+        if self.layernorm:
+            self.critic = QNetworkLN(num_inputs, action_space.shape[0], args.hidden_size).to(device=self.device)
+            self.critic_target = QNetworkLN(num_inputs, action_space.shape[0], args.hidden_size).to(self.device)
+        else:
+            self.critic = QNetwork(num_inputs, action_space.shape[0], args.hidden_size).to(device=self.device)
+            self.critic_target = QNetwork(num_inputs, action_space.shape[0], args.hidden_size).to(self.device)
         self.critic_optim = Adam(self.critic.parameters(), lr=args.lr)
 
-        self.critic_target = QNetwork(
-            num_inputs, action_space.shape[0], args.hidden_size
-        ).to(self.device)
+
         hard_update(self.critic_target, self.critic)
 
         if self.policy_type == "Gaussian":
@@ -46,18 +49,27 @@ class SAC(object):
                     self.target_entropy = args.target_entropy
                 self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
                 self.alpha_optim = Adam([self.log_alpha], lr=args.lr)
-
-            self.policy = GaussianPolicy(
-                num_inputs, action_space.shape[0], args.hidden_size, action_space
-            ).to(self.device)
+            if self.layernorm:
+               self.policy = GaussianPolicyLN(
+                    num_inputs, action_space.shape[0], args.hidden_size, action_space
+                ).to(self.device)
+            else:
+                self.policy = GaussianPolicy(
+                    num_inputs, action_space.shape[0], args.hidden_size, action_space
+                ).to(self.device)
             self.policy_optim = Adam(self.policy.parameters(), lr=args.lr)
 
         else:
             self.alpha = 0
             self.automatic_entropy_tuning = False
-            self.policy = DeterministicPolicy(
-                num_inputs, action_space.shape[0], args.hidden_size, action_space
-            ).to(self.device)
+            if self.layernorm:
+                self.policy = DeterministicPolicyLN(
+                    num_inputs, action_space.shape[0], args.hidden_size, action_space
+                ).to(self.device)
+            else:
+                self.policy = DeterministicPolicy(
+                    num_inputs, action_space.shape[0], args.hidden_size, action_space
+                ).to(self.device)
             self.policy_optim = Adam(self.policy.parameters(), lr=args.lr)
 
     def select_action(self, state, batched=False, evaluate=False):
@@ -92,13 +104,14 @@ class SAC(object):
     def update_parameters(
         self, memory, batch_size, updates, logger=None, reverse_mask=False
     ):
-        # Sample a batch from memory
+        # Sample a batch from memory and ignore truncated transititons
         (
             state_batch,
             action_batch,
             next_state_batch,
             reward_batch,
-            mask_batch,
+            mask_batch, #these corresponds to the terminated ones
+            _, #truncated not used
         ) = memory.sample(batch_size).astuple()
         state_batch = torch.FloatTensor(state_batch).to(self.device)
         next_state_batch = torch.FloatTensor(next_state_batch).to(self.device)

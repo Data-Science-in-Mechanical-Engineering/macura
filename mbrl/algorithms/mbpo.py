@@ -5,7 +5,7 @@
 import os
 from typing import Optional, Sequence, cast
 
-import gym
+import gymnasium as gym
 import hydra.utils
 import numpy as np
 import omegaconf
@@ -38,60 +38,33 @@ def rollout_model_and_populate_sac_buffer(
         sac_samples_action: bool,
         rollout_horizon: int,
         batch_size: int,
-        env_steps
-):
+        env_steps):
     batch = replay_buffer.sample(batch_size)
     initial_obs, *_ = cast(mbrl.types.TransitionBatch, batch).astuple()
     model_state = model_env.reset(
         initial_obs_batch=cast(np.ndarray, initial_obs),
         return_as_np=True,
     )
-    accum_dones = np.zeros(initial_obs.shape[0], dtype=bool)
+    accum_terminated = np.zeros(initial_obs.shape[0], dtype=bool)
+    pred_truncated= np.zeros(initial_obs.shape[0], dtype=bool) # Let it be false all the time because model predictions do no get truncated
     obs = initial_obs
     num_added = 0
     for i in range(rollout_horizon):
         action = agent.act(obs, sample=sac_samples_action, batched=True)
-        pred_next_obs, pred_rewards, pred_dones, model_state = model_env.step(
+        pred_next_obs, pred_rewards, pred_terminated, model_state = model_env.step(
             action, model_state, sample=True
         )
         sac_buffer.add_batch(
-            obs[~accum_dones],
-            action[~accum_dones],
-            pred_next_obs[~accum_dones],
-            pred_rewards[~accum_dones, 0],
-            pred_dones[~accum_dones, 0],
+            obs[~accum_terminated],
+            action[~accum_terminated],
+            pred_next_obs[~accum_terminated],
+            pred_rewards[~accum_terminated, 0],
+            pred_terminated[~accum_terminated, 0],
+            pred_truncated[~accum_terminated]
         )
-        num_added += (~accum_dones).sum()
+        num_added += (~accum_terminated).sum()
         obs = pred_next_obs
-        accum_dones |= pred_dones.squeeze()
-    data = {
-        "rollout/env_step": env_steps + 1,
-        "rollout/average_length": rollout_horizon,
-        "rollout/minimum_length": rollout_horizon,
-        "rollout/maximum_length": rollout_horizon,
-        "rollout/added_transitions": num_added
-    }
-
-
-def evaluate(
-        env: gym.Env,
-        agent: SACAgent,
-        num_episodes: int,
-        video_recorder: VideoRecorder,
-) -> float:
-    avg_episode_reward = 0
-    for episode in range(num_episodes):
-        obs = env.reset()
-        video_recorder.init(enabled=(episode == 0))
-        done = False
-        episode_reward = 0
-        while not done:
-            action = agent.act(obs)
-            obs, reward, done, _ = env.step(action)
-            video_recorder.record(env)
-            episode_reward += reward
-        avg_episode_reward += episode_reward
-    return avg_episode_reward / num_episodes
+        accum_terminated |= pred_terminated.squeeze()
 
 
 def maybe_replace_sac_buffer(
@@ -109,8 +82,8 @@ def maybe_replace_sac_buffer(
         new_buffer = mbrl.util.ReplayBuffer(new_capacity, obs_shape, act_shape, rng=rng)
         if sac_buffer is None:
             return new_buffer
-        obs, action, next_obs, reward, done = sac_buffer.get_all().astuple()
-        new_buffer.add_batch(obs, action, next_obs, reward, done)
+        obs, action, next_obs, reward, terminated, truncated = sac_buffer.get_all().astuple()
+        new_buffer.add_batch(obs, action, next_obs, reward, terminated, truncated)
         return new_buffer
     return sac_buffer
 
@@ -132,11 +105,7 @@ def train(
     exploration_type_env = cfg.overrides.exploration_type_env
 
     mbrl.planning.complete_agent_cfg(env, cfg.algorithm.agent)
-    agent = SACAgent(
-        cast(pytorch_sac_pranz24.SAC, hydra.utils.instantiate(cfg.algorithm.agent))
-    )
-
-
+    agent = SACAgent(pytorch_sac_pranz24.SAC(cfg.algorithm.agent.num_inputs, env.action_space, cfg.algorithm.agent.args))
     if work_dir == None:
         print("Running MBPO algorithm from a fresh start!")
         work_dir = os.getcwd()
@@ -193,6 +162,11 @@ def train(
     trains_per_epoch = int(
         np.ceil(cfg.overrides.epoch_length / cfg.overrides.freq_train_model)
     )
+    #Network reset
+    critic_reset = cfg.algorithm.critic_reset
+    critic_reset_every_step = cfg.algorithm.critic_reset_every_step
+    critic_reset_factor = cfg.algorithm.critic_reset_factor
+
     updates_made = 0
     env_steps = 0
     model_env = mbrl.models.ModelEnv(
@@ -218,23 +192,25 @@ def train(
         sac_buffer = maybe_replace_sac_buffer(
             sac_buffer, obs_shape, act_shape, sac_buffer_capacity, cfg.seed
         )
-        obs, done = None, False
+        obs, terminated, truncated = None, False, False
         if exploration_type_env == "pink":
             action_noise = cn.powerlaw_psd_gaussian(1, (env.action_space.shape[0], cfg.overrides.epoch_length), random_state=rng)
 
         for steps_epoch in range(cfg.overrides.epoch_length):
-            if steps_epoch == 0 or done:
-                obs, done = env.reset(), False
+            if steps_epoch == 0 or terminated or truncated:
+                obs, _ = env.reset()
+                terminated = False
+                truncated = False
             # --- Doing env step and adding to model dataset ---
             if exploration_type_env == "pink":
-                next_obs, reward, done, _ = mbrl.util.common.step_env_and_add_to_buffer_eps(
+                next_obs, reward, terminated, truncated, _ = mbrl.util.common.step_env_and_add_to_buffer_eps(
                     env, obs, agent, {}, replay_buffer, eps=action_noise[:, steps_epoch])
             elif exploration_type_env == "white":
-                next_obs, reward, done, _ = mbrl.util.common.step_env_and_add_to_buffer(
+                next_obs, reward, terminated, truncated , _ = mbrl.util.common.step_env_and_add_to_buffer(
                     env, obs, agent, {"sample":True}, replay_buffer
                 )
             elif exploration_type_env == "det":
-                next_obs, reward, done, _ = mbrl.util.common.step_env_and_add_to_buffer(
+                next_obs, reward, terminated, truncated, _ = mbrl.util.common.step_env_and_add_to_buffer(
                     env, obs, agent, {}, replay_buffer
                 )
             else:
@@ -271,7 +247,11 @@ def train(
                         f"Steps: {env_steps}"
                     )
 
-            # --------------- Agent Training -----------------
+            # --------------- Agent Training ----------------
+            #SAC critic network reset
+            if critic_reset and env_steps%critic_reset_every_step==0:
+                agent.sac_agent.critic.reset_weights(critic_reset_factor)
+
             for _ in range(cfg.overrides.num_sac_updates_per_step):
                 use_real_data = rng.random() < cfg.algorithm.real_data_ratio
                 which_buffer = replay_buffer if use_real_data else sac_buffer
@@ -293,7 +273,7 @@ def train(
 
             # ------ Epoch ended (evaluate and save model) ------
             if (env_steps + 1) % cfg.overrides.epoch_length == 0:
-                avg_reward = evaluate(
+                avg_reward = mbrl.util.common.evaluate(
                     test_env, agent, cfg.algorithm.num_eval_episodes, video_recorder
                 )
                 logger.log_data(

@@ -1,13 +1,14 @@
 import math
 
-import gym
+import gymnasium as gym
 import numpy as np
-from gym import logger, spaces
-from gym.utils import seeding
+from gymnasium import logger, spaces
+from gymnasium.utils import seeding
 from scipy.linalg import expm
 
 
 class Linearized_Simple_Pendulum(gym.Env):
+    # Does not follow the new syntax with render mode as argument, because it does not have one and also cfg is not standard
     def __init__(self, cfg):
         self.g = cfg.g
         self.m = cfg.m

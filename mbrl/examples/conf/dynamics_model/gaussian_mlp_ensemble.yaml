@@ -1,4 +1,3 @@
-# @package _group_
 _target_: mbrl.models.GaussianMLP
 device: ${device}
 num_layers: 4
@@ -10,5 +9,5 @@ deterministic: false
 propagation_method: random_model
 learn_logvar_bounds: false  # so far this works better
 minimum_variance_exponent: ${overrides.minimum_variance_exponent}
-activation_fn_cfg:
-  _target_: torch.nn.SiLU
+#Recursive instantiation not working with new hydra version why #TODO
+#Workaround now is to set SiLU as standard in GaussianMLP

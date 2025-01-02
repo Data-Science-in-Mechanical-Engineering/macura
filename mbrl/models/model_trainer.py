@@ -17,7 +17,6 @@ from mbrl.util.replay_buffer import BootstrapIterator, TransitionIterator
 
 from .model import Model
 
-import wandb
 
 MODEL_LOG_FORMAT = [
     ("train_iteration", "I", "int"),
